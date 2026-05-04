@@ -23,6 +23,38 @@ var authEditableFields = []editableField{
 	{label: "Priority", key: "priority"},
 }
 
+type authDisabledFilterState int
+
+const (
+	authDisabledFilterAll authDisabledFilterState = iota
+	authDisabledFilterActive
+	authDisabledFilterDisabled
+)
+
+func (s authDisabledFilterState) next() authDisabledFilterState {
+	switch s {
+	case authDisabledFilterAll:
+		return authDisabledFilterActive
+	case authDisabledFilterActive:
+		return authDisabledFilterDisabled
+	default:
+		return authDisabledFilterAll
+	}
+}
+
+func (s authDisabledFilterState) pointer() *bool {
+	switch s {
+	case authDisabledFilterActive:
+		value := false
+		return &value
+	case authDisabledFilterDisabled:
+		value := true
+		return &value
+	default:
+		return nil
+	}
+}
+
 // authTabModel displays auth credential files with interactive management.
 type authTabModel struct {
 	client   *Client
@@ -42,6 +74,12 @@ type authTabModel struct {
 	editField    int             // index into authEditableFields
 	editInput    textinput.Model // text input for editing
 	editFileName string          // name of file being edited
+
+	// Filtering state
+	filtering      bool
+	filterInput    textinput.Model
+	searchQuery    string
+	disabledFilter authDisabledFilterState
 }
 
 type authFilesMsg struct {
@@ -55,13 +93,16 @@ type authActionMsg struct {
 }
 
 func newAuthTabModel(client *Client) authTabModel {
-	ti := textinput.New()
-	ti.CharLimit = 256
+	editInput := textinput.New()
+	editInput.CharLimit = 256
+	filterInput := textinput.New()
+	filterInput.CharLimit = 256
 	return authTabModel{
-		client:    client,
-		expanded:  -1,
-		confirm:   -1,
-		editInput: ti,
+		client:      client,
+		expanded:    -1,
+		confirm:     -1,
+		editInput:   editInput,
+		filterInput: filterInput,
 	}
 }
 
@@ -70,7 +111,10 @@ func (m authTabModel) Init() tea.Cmd {
 }
 
 func (m authTabModel) fetchFiles() tea.Msg {
-	files, err := m.client.GetAuthFiles()
+	files, err := m.client.GetAuthFilesWithFilter(AuthFilesFilter{
+		Query:    m.searchQuery,
+		Disabled: m.disabledFilter.pointer(),
+	})
 	return authFilesMsg{files: files, err: err}
 }
 
@@ -87,6 +131,12 @@ func (m authTabModel) Update(msg tea.Msg) (authTabModel, tea.Cmd) {
 			m.files = msg.files
 			if m.cursor >= len(m.files) {
 				m.cursor = max(0, len(m.files)-1)
+			}
+			if m.expanded >= len(m.files) {
+				m.expanded = -1
+			}
+			if m.confirm >= len(m.files) {
+				m.confirm = -1
 			}
 			m.status = ""
 		}
@@ -107,6 +157,11 @@ func (m authTabModel) Update(msg tea.Msg) (authTabModel, tea.Cmd) {
 		// ---- Editing mode ----
 		if m.editing {
 			return m.handleEditInput(msg)
+		}
+
+		// ---- Filtering mode ----
+		if m.filtering {
+			return m.handleFilterInput(msg)
 		}
 
 		// ---- Delete confirmation mode ----
@@ -147,6 +202,7 @@ func (m *authTabModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 	m.editInput.Width = w - 20
+	m.filterInput.Width = w - 20
 	if !m.ready {
 		m.viewport = viewport.New(w, h)
 		m.viewport.SetContent(m.renderContent())
@@ -173,6 +229,23 @@ func (m authTabModel) renderContent() string {
 	sb.WriteString("\n")
 	sb.WriteString(helpStyle.Render(T("auth_help2")))
 	sb.WriteString("\n")
+	searchValue := strings.TrimSpace(m.searchQuery)
+	if searchValue == "" {
+		searchValue = T("not_set")
+	}
+	sb.WriteString(helpStyle.Render(fmt.Sprintf("  %s: %s • %s: %s",
+		T("auth_search_label"),
+		searchValue,
+		T("auth_filter_label"),
+		m.disabledFilterLabel(),
+	)))
+	sb.WriteString("\n")
+	if m.filtering {
+		sb.WriteString(m.filterInput.View())
+		sb.WriteString("\n")
+		sb.WriteString(helpStyle.Render("    " + T("enter_save") + " • " + T("esc_cancel")))
+		sb.WriteString("\n")
+	}
 	sb.WriteString(strings.Repeat("─", m.width))
 	sb.WriteString("\n")
 
@@ -183,7 +256,11 @@ func (m authTabModel) renderContent() string {
 	}
 
 	if len(m.files) == 0 {
-		sb.WriteString(subtitleStyle.Render(T("no_auth_files")))
+		emptyText := T("no_auth_files")
+		if m.hasFilters() {
+			emptyText = T("auth_no_matches")
+		}
+		sb.WriteString(subtitleStyle.Render(emptyText))
 		sb.WriteString("\n")
 		return sb.String()
 	}
@@ -327,6 +404,21 @@ func max(a, b int) int {
 	return b
 }
 
+func (m authTabModel) hasFilters() bool {
+	return strings.TrimSpace(m.searchQuery) != "" || m.disabledFilter != authDisabledFilterAll
+}
+
+func (m authTabModel) disabledFilterLabel() string {
+	switch m.disabledFilter {
+	case authDisabledFilterActive:
+		return T("auth_filter_active")
+	case authDisabledFilterDisabled:
+		return T("auth_filter_disabled")
+	default:
+		return T("auth_filter_all")
+	}
+}
+
 func (m authTabModel) handleEditInput(msg tea.KeyMsg) (authTabModel, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
@@ -362,6 +454,39 @@ func (m authTabModel) handleEditInput(msg tea.KeyMsg) (authTabModel, tea.Cmd) {
 	default:
 		var cmd tea.Cmd
 		m.editInput, cmd = m.editInput.Update(msg)
+		m.viewport.SetContent(m.renderContent())
+		return m, cmd
+	}
+}
+
+func (m *authTabModel) startFilter() tea.Cmd {
+	m.filtering = true
+	m.filterInput.SetValue(m.searchQuery)
+	m.filterInput.Focus()
+	m.filterInput.Prompt = "  " + T("auth_search_prompt")
+	m.viewport.SetContent(m.renderContent())
+	return textinput.Blink
+}
+
+func (m authTabModel) handleFilterInput(msg tea.KeyMsg) (authTabModel, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.filtering = false
+		m.filterInput.Blur()
+		m.searchQuery = strings.TrimSpace(m.filterInput.Value())
+		m.cursor = 0
+		m.expanded = -1
+		m.confirm = -1
+		m.viewport.SetContent(m.renderContent())
+		return m, m.fetchFiles
+	case "esc":
+		m.filtering = false
+		m.filterInput.Blur()
+		m.viewport.SetContent(m.renderContent())
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(msg)
 		m.viewport.SetContent(m.renderContent())
 		return m, cmd
 	}
@@ -445,6 +570,16 @@ func (m authTabModel) handleNormalInput(msg tea.KeyMsg) (authTabModel, tea.Cmd) 
 		return m, m.startEdit(1) // proxy_url
 	case "3":
 		return m, m.startEdit(2) // priority
+	case "/":
+		return m, m.startFilter()
+	case "f", "F":
+		m.disabledFilter = m.disabledFilter.next()
+		m.cursor = 0
+		m.expanded = -1
+		m.confirm = -1
+		m.status = ""
+		m.viewport.SetContent(m.renderContent())
+		return m, m.fetchFiles
 	case "r":
 		m.status = ""
 		return m, m.fetchFiles

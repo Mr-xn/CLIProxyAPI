@@ -18,6 +18,12 @@ type Client struct {
 	http      *http.Client
 }
 
+type AuthFilesFilter struct {
+	Query    string
+	Provider string
+	Disabled *bool
+}
+
 // NewClient creates a new management API client.
 func NewClient(port int, secretKey string) *Client {
 	return &Client{
@@ -140,15 +146,30 @@ func (c *Client) PutConfigYAML(yamlContent string) error {
 	return err
 }
 
-// GetUsage fetches usage statistics.
-func (c *Client) GetUsage() (map[string]any, error) {
-	return c.getJSON("/v0/management/usage")
-}
-
 // GetAuthFiles lists auth credential files.
 // API returns {"files": [...]}.
 func (c *Client) GetAuthFiles() ([]map[string]any, error) {
-	wrapper, err := c.getJSON("/v0/management/auth-files")
+	return c.GetAuthFilesWithFilter(AuthFilesFilter{})
+}
+
+// GetAuthFilesWithFilter lists auth credential files with optional query filters.
+func (c *Client) GetAuthFilesWithFilter(filter AuthFilesFilter) ([]map[string]any, error) {
+	query := url.Values{}
+	if trimmed := strings.TrimSpace(filter.Query); trimmed != "" {
+		query.Set("q", trimmed)
+	}
+	if trimmed := strings.TrimSpace(filter.Provider); trimmed != "" {
+		query.Set("provider", trimmed)
+	}
+	if filter.Disabled != nil {
+		query.Set("disabled", strconv.FormatBool(*filter.Disabled))
+	}
+
+	path := "/v0/management/auth-files"
+	if encodedQuery := query.Encode(); encodedQuery != "" {
+		path += "?" + encodedQuery
+	}
+	wrapper, err := c.getJSON(path)
 	if err != nil {
 		return nil, err
 	}

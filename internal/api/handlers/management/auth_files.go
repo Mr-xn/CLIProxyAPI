@@ -128,6 +128,133 @@ func isWebUIRequest(c *gin.Context) bool {
 	}
 }
 
+type authFilesListFilter struct {
+	Query    string
+	Provider string
+	Disabled *bool
+}
+
+func parseAuthFilesListFilter(c *gin.Context) authFilesListFilter {
+	if c == nil {
+		return authFilesListFilter{}
+	}
+	filter := authFilesListFilter{
+		Query:    strings.TrimSpace(c.Query("q")),
+		Provider: strings.TrimSpace(c.Query("provider")),
+	}
+	if filter.Query == "" {
+		filter.Query = strings.TrimSpace(c.Query("search"))
+	}
+	if filter.Provider == "" {
+		filter.Provider = strings.TrimSpace(c.Query("type"))
+	}
+	filter.Disabled = parseOptionalBoolQuery(c.Query("disabled"))
+	return filter
+}
+
+func parseOptionalBoolQuery(raw string) *bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return nil
+	case "1", "true", "yes", "on", "disabled":
+		value := true
+		return &value
+	case "0", "false", "no", "off", "active", "enabled":
+		value := false
+		return &value
+	default:
+		return nil
+	}
+}
+
+func applyAuthFilesListFilter(files []gin.H, filter authFilesListFilter) []gin.H {
+	if len(files) == 0 {
+		return files
+	}
+	if filter.Query == "" && filter.Provider == "" && filter.Disabled == nil {
+		return files
+	}
+	filtered := make([]gin.H, 0, len(files))
+	for _, file := range files {
+		if authFileEntryMatchesFilter(file, filter) {
+			filtered = append(filtered, file)
+		}
+	}
+	return filtered
+}
+
+func authFileEntryMatchesFilter(entry gin.H, filter authFilesListFilter) bool {
+	if filter.Disabled != nil && authFileEntryBool(entry, "disabled") != *filter.Disabled {
+		return false
+	}
+	if filter.Provider != "" {
+		provider := authFileEntryString(entry, "provider")
+		if provider == "" {
+			provider = authFileEntryString(entry, "type")
+		}
+		if !strings.EqualFold(provider, filter.Provider) {
+			return false
+		}
+	}
+	if filter.Query == "" {
+		return true
+	}
+	query := strings.ToLower(filter.Query)
+	searchFields := []string{
+		authFileEntryString(entry, "name"),
+		authFileEntryString(entry, "provider"),
+		authFileEntryString(entry, "type"),
+		authFileEntryString(entry, "email"),
+		authFileEntryString(entry, "label"),
+		authFileEntryString(entry, "status"),
+		authFileEntryString(entry, "status_message"),
+		authFileEntryString(entry, "account_type"),
+		authFileEntryString(entry, "account"),
+		authFileEntryString(entry, "prefix"),
+		authFileEntryString(entry, "proxy_url"),
+		authFileEntryString(entry, "note"),
+		authFileEntryString(entry, "auth_index"),
+		authFileEntryString(entry, "source"),
+	}
+	if idToken, ok := entry["id_token"].(gin.H); ok {
+		searchFields = append(searchFields,
+			authFileEntryString(idToken, "plan_type"),
+			authFileEntryString(idToken, "chatgpt_account_id"),
+		)
+	} else if idToken, ok := entry["id_token"].(map[string]any); ok {
+		searchFields = append(searchFields,
+			authFileEntryString(idToken, "plan_type"),
+			authFileEntryString(idToken, "chatgpt_account_id"),
+		)
+	}
+	for _, field := range searchFields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func authFileEntryString(entry map[string]any, key string) string {
+	if entry == nil {
+		return ""
+	}
+	if value, ok := entry[key]; ok && value != nil {
+		return strings.TrimSpace(fmt.Sprintf("%v", value))
+	}
+	return ""
+}
+
+func authFileEntryBool(entry map[string]any, key string) bool {
+	if entry == nil {
+		return false
+	}
+	if value, ok := entry[key].(bool); ok {
+		return value
+	}
+	return false
+}
+
 func startCallbackForwarder(port int, provider, targetBase string) (*callbackForwarder, error) {
 	callbackForwardersMu.Lock()
 	prev := callbackForwarders[port]
@@ -240,8 +367,9 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "handler not initialized"})
 		return
 	}
+	filter := parseAuthFilesListFilter(c)
 	if h.authManager == nil {
-		h.listAuthFilesFromDisk(c)
+		h.listAuthFilesFromDisk(c, filter)
 		return
 	}
 	auths := h.authManager.List()
@@ -251,6 +379,7 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 			files = append(files, entry)
 		}
 	}
+	files = applyAuthFilesListFilter(files, filter)
 	sort.Slice(files, func(i, j int) bool {
 		nameI, _ := files[i]["name"].(string)
 		nameJ, _ := files[j]["name"].(string)
@@ -308,7 +437,7 @@ func (h *Handler) GetAuthFileModels(c *gin.Context) {
 }
 
 // List auth files from disk when the auth manager is unavailable.
-func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
+func (h *Handler) listAuthFilesFromDisk(c *gin.Context, filter authFilesListFilter) {
 	entries, err := os.ReadDir(h.cfg.AuthDir)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("failed to read auth dir: %v", err)})
@@ -332,6 +461,7 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 				typeValue := gjson.GetBytes(data, "type").String()
 				emailValue := gjson.GetBytes(data, "email").String()
 				fileData["type"] = typeValue
+				fileData["provider"] = typeValue
 				fileData["email"] = emailValue
 				if pv := gjson.GetBytes(data, "priority"); pv.Exists() {
 					switch pv.Type {
@@ -353,6 +483,7 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 			files = append(files, fileData)
 		}
 	}
+	files = applyAuthFilesListFilter(files, filter)
 	c.JSON(200, gin.H{"files": files})
 }
 
@@ -388,6 +519,9 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 		"source":         "memory",
 		"size":           int64(0),
 	}
+	entry["success"] = auth.Success
+	entry["failed"] = auth.Failed
+	entry["recent_requests"] = auth.RecentRequestsSnapshot(time.Now())
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email
 	}

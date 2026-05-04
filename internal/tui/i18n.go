@@ -50,8 +50,8 @@ var locales = map[string]map[string]string{
 // ──────────────────────────────────────────
 // Tab names
 // ──────────────────────────────────────────
-var zhTabNames = []string{"仪表盘", "配置", "认证文件", "API 密钥", "OAuth", "使用统计", "日志"}
-var enTabNames = []string{"Dashboard", "Config", "Auth Files", "API Keys", "OAuth", "Usage", "Logs"}
+var zhTabNames = []string{"仪表盘", "配置", "认证文件", "API 密钥", "OAuth", "日志"}
+var enTabNames = []string{"Dashboard", "Config", "Auth Files", "API Keys", "OAuth", "Logs"}
 
 // TabNames returns tab names in the current locale.
 func TabNames() []string {
@@ -136,8 +136,15 @@ var zhStrings = map[string]string{
 
 	// ── Auth Files ──
 	"auth_title":      "🔑 认证文件",
-	"auth_help1":      " [↑↓/jk] 导航 • [Enter] 展开 • [e] 启用/停用 • [d] 删除 • [r] 刷新",
-	"auth_help2":      " [1] 编辑 prefix • [2] 编辑 proxy_url • [3] 编辑 priority",
+	"auth_help1":      " [↑↓/jk] 导航 • [Enter] 展开 • [e] 启用/停用 • [d] 删除 • [/] 搜索 • [f] 状态筛选 • [r] 刷新",
+	"auth_help2":      " [1] 编辑 prefix • [2] 编辑 proxy_url • [3] 编辑 priority • 搜索框回车应用",
+	"auth_search_label": "搜索",
+	"auth_search_prompt": "搜索: ",
+	"auth_filter_label": "筛选",
+	"auth_filter_all":   "全部",
+	"auth_filter_active": "启用中",
+	"auth_filter_disabled": "已停用",
+	"auth_no_matches":   "  当前筛选条件下无认证文件",
 	"no_auth_files":   "  无认证文件",
 	"confirm_delete":  "⚠ 删除 %s? [y/n]",
 	"deleted":         "已删除 %s",
@@ -288,8 +295,15 @@ var enStrings = map[string]string{
 
 	// ── Auth Files ──
 	"auth_title":      "🔑 Auth Files",
-	"auth_help1":      " [↑↓/jk] Navigate • [Enter] Expand • [e] Enable/Disable • [d] Delete • [r] Refresh",
-	"auth_help2":      " [1] Edit prefix • [2] Edit proxy_url • [3] Edit priority",
+	"auth_help1":      " [↑↓/jk] Navigate • [Enter] Expand • [e] Enable/Disable • [d] Delete • [/] Search • [f] Status Filter • [r] Refresh",
+	"auth_help2":      " [1] Edit prefix • [2] Edit proxy_url • [3] Edit priority • Press Enter in search to apply",
+	"auth_search_label": "Search",
+	"auth_search_prompt": "Search: ",
+	"auth_filter_label": "Filter",
+	"auth_filter_all":   "all",
+	"auth_filter_active": "active",
+	"auth_filter_disabled": "disabled",
+	"auth_no_matches":   "  No auth files match the current filters",
 	"no_auth_files":   "  No auth files found",
 	"confirm_delete":  "⚠ Delete %s? [y/n]",
 	"deleted":         "Deleted %s",
