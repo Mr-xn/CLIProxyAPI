@@ -373,7 +373,8 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	}
 
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
-		if requestID := logging.GetRequestID(requestCtx); requestID != "" {
+		requestID := logging.GetRequestID(requestCtx)
+		if requestID != "" {
 			parentCtx = logging.WithRequestID(parentCtx, requestID)
 		} else if requestID = logging.GetGinRequestID(c); requestID != "" {
 			parentCtx = logging.WithRequestID(parentCtx, requestID)
